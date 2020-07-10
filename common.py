@@ -4,7 +4,9 @@ import tempfile
 import zipfile
 
 import netCDF4
+import cftime
 import numpy as np
+import pandas as pd
 from osgeo import gdal
 from pysteps import motion
 from scipy.ndimage import map_coordinates
@@ -65,7 +67,7 @@ def mkdir(mydir):
         return None
     return None
 
-def vol_to_grids(vol_ffn, grid_config, vol_dbz_offset, temp_data):
+def vol_to_grids(vol_ffn, grid_config, vol_dbz_offset):
     #refl cappi index
     #5 = 2.5km
     cappi_index = 5
@@ -82,6 +84,9 @@ def vol_to_grids(vol_ffn, grid_config, vol_dbz_offset, temp_data):
     ma_refl_field = np.ma.masked_where(np.logical_or(R<10, R>120), refl_field.copy())
     radar.add_field_like('DBZH', 'MA_DBZH_CLEAN', ma_refl_field, replace_existing=True)
 
+    #temp data <-- get from ACCESS-R archive
+    temp_data = mesh.temperature_profile_access(radar)
+
     #grid
     grid = pyart.map.grid_from_radars(
                     radar,
@@ -92,7 +97,7 @@ def vol_to_grids(vol_ffn, grid_config, vol_dbz_offset, temp_data):
                     weighting_function = 'Barnes2',
                     fields = ['MA_DBZH_CLEAN'])
     #extract data and apply refl offset
-    refl_grid = grid.fields['MA_DBZH_CLEAN']['data'] + vol_dbz_offset
+    refl_grid = grid.fields['MA_DBZH_CLEAN']['data'] - vol_dbz_offset
     alt_vec = grid.z['data']
     #calculate refl field
     REFL = refl_grid[cappi_index,:,:]
@@ -247,9 +252,9 @@ def write_grid_geotiff(input_array, filename, geo_info,
     dst_ds.FlushCache()
     dst_ds = None
 
-    #convert to EPSG4326
+    #convert to EPSG3577 GDA
     input_raster = gdal.Open(temp_fn)
-    gdal.Warp(filename, input_raster, dstSRS="EPSG:4326")
+    gdal.Warp(filename, input_raster, dstSRS="EPSG:3577")
     
     os.system('rm '+ temp_fn)
     

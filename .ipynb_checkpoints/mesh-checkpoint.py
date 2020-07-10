@@ -6,10 +6,17 @@ Required reflectivity and temperature data
 
 Joshua Soderholm - 15 June 2018
 """
+import os
+from datetime import datetime
 
 import pyart
 import netCDF4
+import cftime
 import numpy as np
+import pandas as pd
+import xarray as xr
+
+from scipy.interpolate import interp1d
 
 def _sounding_interp(snd_temp, snd_height, target_temp):
     """
@@ -51,6 +58,51 @@ def _sounding_interp(snd_temp, snd_height, target_temp):
     else:
         return target_temp[0]
 
+
+def temperature_profile_access(radar):
+    """
+    Return the 0C and -20C levels for MESH calculatations using access-g dataset on NCI for temperature information
+    Parameters:
+    ===========
+    radar:
+        Py-ART radar object.
+    """
+    grlat = radar.latitude['data'][0]
+    grlon = radar.longitude['data'][0]
+    dtime = pd.Timestamp(cftime.num2pydate(radar.time['data'][0], radar.time['units']))
+
+    #build paths
+    request_date = datetime.strftime(dtime, '%Y%m%d')
+    request_time = str(round(dtime.hour/6)*6).zfill(2) + '00'
+    if request_time == '2400':
+        request_time = '0000'
+    
+    access_root = '/g/data/lb4/ops_aps2/access-g/0001' #access g
+    access_folder = '/'.join([access_root, request_date, request_time, 'an', 'pl'])
+    #build filenames
+    temp_ffn = access_folder + '/air_temp.nc'
+    geop_ffn = access_folder + '/geop_ht.nc'
+    if not os.path.isfile(temp_ffn):
+        raise FileNotFoundError(f'{temp_ffn}: no such file for temperature.')
+    if not os.path.isfile(geop_ffn):
+        raise FileNotFoundError(f'{geop_ffn}: no such file for geopotential.')
+    #extract data
+    temp_ds = xr.open_dataset(temp_ffn)
+    temp_profile = temp_ds.air_temp.sel(lon=grlon, method='nearest').sel(lat=grlat, method='nearest').data[0] - 273.15 #units: deg C
+    geop_ds = xr.open_dataset(geop_ffn)
+    geopot_profile = geop_ds.geop_ht.sel(lon=grlon, method='nearest').sel(lat=grlat, method='nearest').data[0] #units: m
+    
+    #append surface data using lowest level
+    geop_profile = np.append([0], geopot_profile)
+    temp_profile = np.append(temp_profile[0], temp_profile)
+    
+    #generate temperature levels
+    level_0C = _sounding_interp(temp_profile, geop_profile, 0.)
+    level_minus20C = _sounding_interp(temp_profile, geop_profile, -20.)
+    
+    return [level_0C, level_minus20C]
+    
+    
 def _get_latlon(radgrid, ref_name):
     """
     Generates lattitude and longitude arrays.
